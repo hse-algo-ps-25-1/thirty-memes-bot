@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Тесты
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Окружение
+        run: uv sync --frozen
+
+      - name: Оболочка
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Демо
+        run: uv run python algorithms/demo/test.py
+
+  publish:
+    name: Образ
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Имя образа
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Выкладка
+    environment: production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: thirty-memes-bot-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Имя образа
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]'):latest" >> "$GITHUB_ENV"
+
+      - name: Обновить контейнер
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          command_timeout: 10m
+          envs: IMAGE,CONTAINER_NAME,TELEGRAM_BOT_TOKEN,ADMIN_USER_IDS
+          script: |
+            set -eu
+            docker pull "$IMAGE"
+            docker stop "$CONTAINER_NAME" || true
+            docker rm "$CONTAINER_NAME" || true
+            docker run -d --name "$CONTAINER_NAME" --restart unless-stopped --init \
+              -e TELEGRAM_BOT_TOKEN \
+              -e ADMIN_USER_IDS \
+              "$IMAGE"
