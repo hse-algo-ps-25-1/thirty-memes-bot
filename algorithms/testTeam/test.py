@@ -8,8 +8,8 @@ MEME_NAME = re.compile(r"^(0[1-9]|[12]\d|30)_[A-Za-z0-9_]+\.(jpg|png)$")
 MEMES_DIR = Path(__file__).resolve().parent / "memes"
 
 # Одна последняя фраза, разная история, разные файлы.
-HISTORY_A = ["мне тяжело сдать", "да"]
-HISTORY_B = ["сдал с первой попытки", "да"]
+HISTORY_A = ["хочу спать", "скучная лекция", "да"]
+HISTORY_B = ["скоро дедлайн", "всё горит", "да"]
 
 
 def _meme_names() -> set[str]:
@@ -32,7 +32,7 @@ class TestChooseMeme(unittest.TestCase):
 
     def test_deterministic_on_repeated_call(self):
         """Одинаковое окно на двух вызовах даёт одно и то же имя."""
-        messages = ["локально зелёные", "Checks красные"]
+        messages = ["готовлюсь к сессии", "устал"]
         self.assertEqual(choose_meme(messages), choose_meme(list(messages)))
 
     def test_returned_file_exists_when_memes_present(self):
