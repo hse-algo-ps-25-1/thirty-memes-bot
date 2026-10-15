@@ -38,16 +38,25 @@ TEST_GROUP = "Общая"
 
 AUTO_REJECT_MEME = 4
 CALL_BACK_MEME = 15
+OFFER_MEME = 16
+SALARY_MEME = 17
 PROD_DOWN_MEME = 22
 BURNOUT_MEME = 25
 LAUGH_MEME = 29
+
+DISGUISED_REJECTIONS = (
+    "мне н\N{ZERO WIDTH SPACE}е дали оффер",
+    "мне не да\N{COMBINING ACUTE ACCENT}ли оффер",
+    "мне не да\N{COMBINING GRAVE ACCENT}ли оффер",
+    "мне не д\N{COMBINING LOW LINE}а\N{COMBINING LOW LINE}ли оффер",
+)
 
 REACHING_PHRASES = {
     1: "требуют опыт три года для джуна",
     2: "разослал резюме, а в ответ тишина",
     3: "что указать в резюме",
     4: "опять пришел отказ",
-    5: "мне пишут рекрутеры с вакансиями",
+    5: "какой у вас график работы",
     6: "всю ночь решал литкод",
     7: "прошел курсы и получил сертификат",
     8: "прислали тестовое на неделю",
@@ -56,7 +65,7 @@ REACHING_PHRASES = {
     11: "завтра первый собес",
     12: "на собесе был лайвкодинг",
     13: "спросили где я вижу себя через пять лет",
-    14: "на собесе спросили про быструю сортировку",
+    14: "спросил почему у них свободна вакансия",
     15: "сказали что перезвонят",
     16: "ура, получил оффер",
     17: "сколько платят джунам",
@@ -66,7 +75,7 @@ REACHING_PHRASES = {
     21: "первый день на новой работе",
     22: "в пятницу упал прод",
     23: "разбираюсь в легаси без документации",
-    24: "мне не повышают зарплату",
+    24: "говорят контору скоро закроют",
     25: "походу я выгорел",
     26: "привет, бот",
     27: "да",
@@ -77,11 +86,12 @@ REACHING_PHRASES = {
 
 DIALOGS = (
     (["отправил сто резюме", "да"], AUTO_REJECT_MEME),
-    (["мы вам перезвоним", "ок"], AUTO_REJECT_MEME),
+    (["мы вам перезвоним", "да"], AUTO_REJECT_MEME),
     (["завтра собес", "прод упал"], PROD_DOWN_MEME),
     (["прод упал", "ахахах"], LAUGH_MEME),
-    (["завтра собес", "ок", "да"], CALL_BACK_MEME),
-    (["прод упал", "ок", "да"], BURNOUT_MEME),
+    (["завтра собес", "хм", "да"], CALL_BACK_MEME),
+    (["прод упал", "хм", "да"], BURNOUT_MEME),
+    (["привет", "оффер"], OFFER_MEME),
 )
 
 DEMO_HISTORY_A = ["мне тяжело сдать", "да"]
@@ -97,12 +107,36 @@ SAME_MEANING_PAIRS = (
     ("legacy", "легаси"),
     ("колл", "созвон"),
     ("cv", "резюме"),
+    ("interview", "собес"),
+    ("prod", "прод"),
 )
 
 NEGATION_PAIRS = (
     ("прошел собес", "не прошел собес"),
     ("получил оффер", "не получил оффер"),
     ("прод упал", "прод не упал"),
+    ("оффер", "без оффера"),
+)
+
+SERVICE_PHRASES = ("какая сегодня погода", "что делать", "без понятия")
+
+STRETCHED_PAIRS = (
+    ("дааааа", "да"),
+    ("нееет", "нет"),
+    ("оффффер", "оффер"),
+    ("ДАааа", "да"),
+    ("offffer", "offer"),
+    ("helllo", "hello"),
+)
+
+LAUGH_VARIANTS = (
+    "ахахахахахах",
+    "ХАХАХАХАХА",
+    "ахахаххаха",
+    "ха-ха-ха",
+    "хех",
+    "xD",
+    "hahaha",
 )
 
 TYPO_PAIRS = (
@@ -317,29 +351,78 @@ class TestTextProcessing(unittest.TestCase):
                 self.assertEqual(choose_meme([variant]), expected)
 
     def test_negation_changes_answer(self):
-        """Частица «не» склеивается со словом и меняет ответ."""
+        """Частицы «не» и «без» склеиваются со словом и меняют ответ."""
         for positive, negated in NEGATION_PAIRS:
             with self.subTest(negated=negated):
                 self.assertNotEqual(choose_meme([positive]), choose_meme([negated]))
 
     def test_stopwords_do_not_drive_answer(self):
         """Служебные слова не тянут ответ к случайному мему."""
-        self.assertEqual(choose_meme(["какая сегодня погода"]), FALLBACK)
+        for phrase in SERVICE_PHRASES:
+            with self.subTest(phrase=phrase):
+                self.assertEqual(choose_meme([phrase]), FALLBACK)
 
     def test_repeated_word_counts_once(self):
         """Повтор слова не перевешивает остальной смысл реплики."""
         spam = "оффер " * 20 + "прод упал"
         self.assertEqual(_number(choose_meme([spam])), PROD_DOWN_MEME)
 
-    def test_emoji_are_features(self):
-        """Эмодзи не теряются при нарезке и ведут к своим мемам."""
-        for emoji, number in (("😂", LAUGH_MEME), ("🔥", PROD_DOWN_MEME)):
-            with self.subTest(emoji=emoji):
-                self.assertEqual(_number(choose_meme([emoji])), number)
+    def test_symbols_are_features(self):
+        """Эмодзи, знаки валют и скобки-смайлы не теряются и ведут к своим мемам."""
+        symbols = (
+            ("😂", LAUGH_MEME),
+            ("🔥", OFFER_MEME),
+            ("₽", SALARY_MEME),
+            (")))", LAUGH_MEME),
+        )
+        for symbol, number in symbols:
+            with self.subTest(symbol=symbol):
+                self.assertEqual(_number(choose_meme([symbol])), number)
 
     def test_question_after_topic_means_confusion(self):
-        """Знак вопроса тоже признак: вопрос без слов после темы дает «не понял»."""
+        """Вопрос без слов после темы дает «не понял», а не мем темы."""
         self.assertEqual(choose_meme(["прод упал", "?"]), FALLBACK)
+
+    def test_wordless_question_is_feature(self):
+        """Вопрос без слов это признак: он ведет к мему, где есть такая фраза."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = _write_model_folder(
+                Path(folder),
+                [_meme("01_question.png", ["?"]), _meme("02_rest.png", ["кот"])],
+            )
+            answer = choose_with_model(["?"], load_model(path))
+        self.assertEqual(answer, "01_question.png")
+
+    def test_unknown_last_reply_after_topic_gives_fallback(self):
+        """Незнакомая последняя реплика дает «не понял», даже если тема была раньше."""
+        self.assertEqual(choose_meme(["мы вам перезвоним", "йцуйцу"]), FALLBACK)
+
+    def test_question_mark_next_to_words_is_ignored(self):
+        """Вопрос со словами решают слова, а не знак вопроса."""
+        self.assertEqual(
+            choose_meme(["какая у вас вилка?"]), choose_meme(["какая у вас вилка"])
+        )
+
+    def test_invisible_marks_do_not_split_words(self):
+        """Невидимый символ, ударение и подчеркивание не разрывают слово."""
+        expected = choose_meme(["мне не дали оффер"])
+        for disguised in DISGUISED_REJECTIONS:
+            with self.subTest(disguised=disguised):
+                self.assertEqual(choose_meme([disguised]), expected)
+
+    def test_stretched_letters_are_squeezed(self):
+        """Растянутые буквы не мешают: «дааааа» понимается как «да»."""
+        for stretched, plain in STRETCHED_PAIRS:
+            with self.subTest(stretched=stretched):
+                expected = choose_meme([plain])
+                self.assertNotEqual(expected, FALLBACK)
+                self.assertEqual(choose_meme([stretched]), expected)
+
+    def test_laugh_variants_give_laugh_meme(self):
+        """Длинный смех, смех через дефис и короткие смешки ведут к мему про смех."""
+        for laugh in LAUGH_VARIANTS:
+            with self.subTest(laugh=laugh):
+                self.assertEqual(_number(choose_meme([laugh])), LAUGH_MEME)
 
 
 class TestTypos(unittest.TestCase):
@@ -365,6 +448,10 @@ class TestTypos(unittest.TestCase):
             with self.subTest(word=word):
                 self.assertEqual(choose_meme([word]), FALLBACK)
 
+    def test_stopword_is_not_corrected_to_term(self):
+        """Стоп-слово не исправляется в термин: «вроде» не становится «прод»."""
+        self.assertEqual(choose_meme(["вроде"]), FALLBACK)
+
     def test_ambiguous_typo_is_not_corrected(self):
         """Опечатка на равном расстоянии от двух терминов не исправляется."""
         with tempfile.TemporaryDirectory() as folder:
@@ -383,6 +470,17 @@ class TestTypos(unittest.TestCase):
         self.assertEqual(ambiguous, "03_rest.png")
         self.assertEqual(unique, "01_kotik.png")
 
+    def test_typo_between_spellings_of_one_word_is_corrected(self):
+        """Опечатка на равном расстоянии от двух написаний одного слова исправляется."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = _write_model_folder(
+                Path(folder),
+                [_meme("01_kotik.png", ["котик"]), _meme("02_rest.png", ["слон"])],
+                synonyms=[["котик", "котек"]],
+            )
+            answer = choose_with_model(["котак"], load_model(path))
+        self.assertEqual(answer, "01_kotik.png")
+
 
 class TestRobustness(unittest.TestCase):
     """Функция определена на любом окне и не меняет вход."""
@@ -394,6 +492,7 @@ class TestRobustness(unittest.TestCase):
             ["!!!"],
             ["🙂"],
             ["12345"],
+            ["9.9.2026"],
             [""],
             ["а" * 4000],
         )
@@ -436,10 +535,11 @@ class TestInputValidation(unittest.TestCase):
             choose_meme([])
 
     def test_wrong_types_rejected(self):
-        """Не список реплик или реплика не строкой дают TypeError."""
+        """Не список реплик или реплика не строкой дают понятный TypeError."""
         for window in ("завтра собес", ("завтра собес",), [None], ["ок", 5]):
-            with self.subTest(window=window), self.assertRaises(TypeError):
-                choose_meme(window)
+            with self.subTest(window=window):
+                with self.assertRaisesRegex(TypeError, "строк"):
+                    choose_meme(window)
 
 
 class TestDataDrivenModel(unittest.TestCase):
@@ -468,13 +568,13 @@ class TestDataDrivenModel(unittest.TestCase):
             path = _write_model_folder(
                 Path(folder),
                 [
-                    _meme("01_cat.png", ["кот"], group="A"),
-                    _meme("02_dog.png", ["собака"], group="B"),
-                    _meme("03_fish.png", ["рыба"], group="C"),
+                    _meme("01_cat.png", ["кот", "животное"], group="A"),
+                    _meme("02_dog.png", ["собака", "животное"], group="B"),
+                    _meme("03_fish.png", ["рыба", "животное"], group="C"),
                 ],
                 groups={"A": {"after": ["B"]}, "B": {"after": []}, "C": {"after": []}},
             )
-            answer = choose_with_model(["кот", "абырвалг"], load_model(path))
+            answer = choose_with_model(["кот", "животное"], load_model(path))
         self.assertEqual(answer, "02_dog.png")
 
     def test_lonely_meme_keeps_state(self):
@@ -483,13 +583,14 @@ class TestDataDrivenModel(unittest.TestCase):
             path = _write_model_folder(
                 Path(folder),
                 [
-                    _meme("01_dog.png", ["собака"], group="B"),
-                    _meme("02_fish.png", ["рыба"], group="B"),
-                    _meme("03_cat.png", ["кот"], group="A"),
+                    _meme("01_dog.png", ["собака", "животное"], group="B"),
+                    _meme("02_fish.png", ["рыба", "животное"], group="B"),
+                    _meme("03_cat.png", ["кот", "животное"], group="A"),
+                    _meme("04_rest.png", ["слон"], group="B"),
                 ],
                 groups={"A": {"after": []}, "B": {"after": []}},
             )
-            answer = choose_with_model(["кот", "абырвалг"], load_model(path))
+            answer = choose_with_model(["кот", "животное"], load_model(path))
         self.assertEqual(answer, "03_cat.png")
 
     def test_short_description_is_not_outweighed(self):

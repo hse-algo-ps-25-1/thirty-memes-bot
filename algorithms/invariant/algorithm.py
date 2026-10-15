@@ -1,5 +1,6 @@
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
@@ -12,9 +13,19 @@ MEMES_DIR_NAME = "memes"
 SECTION_NAMES = ("params", "fallback", "stopwords", "synonyms", "groups", "memes")
 PARAM_NAMES = ("smoothing", "switch", "stay", "group", "after", "next")
 MEME_FIELDS = ("file", "group", "phrases")
-QUESTION_MARK = "?"
-SYMBOL_CATEGORY = "So"
-NEGATION = "не"
+WORDLESS_MARKS = frozenset({"?", ")", "("})
+SYMBOL_CATEGORIES = frozenset({"So", "Sc"})
+INVISIBLE_CATEGORY = "Cf"
+DROPPED_MARKS = frozenset(
+    {
+        "\N{COMBINING GRAVE ACCENT}",
+        "\N{COMBINING ACUTE ACCENT}",
+        "\N{COMBINING LOW LINE}",
+    }
+)
+STRETCHED_LETTER = re.compile(r"([^\W\d_])\1{2,}")
+REPEATED_SYLLABLE = re.compile(r"([^\W\d_]{2})\1{2,}")
+NEGATIONS = frozenset({"не", "без"})
 NEGATION_JOINER = "_"
 MIN_TYPO_LENGTH = 5
 LONG_WORD_LENGTH = 8
@@ -22,13 +33,14 @@ SHORT_WORD_EDITS = 1
 LONG_WORD_EDITS = 2
 TIE_TOLERANCE = 1e-12
 MODEL_CACHE_SIZE = 8
+CORRECTION_CACHE_SIZE = 4096
 
 
 @dataclass(frozen=True)
 class TextRules:
     synonyms: dict[str, str]
     stopwords: frozenset[str]
-    terms: tuple[str, ...]
+    terms: tuple[tuple[str, str], ...]
     known_lemmas: frozenset[str]
 
 
@@ -49,11 +61,28 @@ def _features_path() -> Path:
     return Path(__file__).resolve().parent / FEATURES_NAME
 
 
-def _symbol_features(text: str) -> list[str]:
+def _cleaned_text(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", text)
+    kept = [
+        char
+        for char in decomposed
+        if char not in DROPPED_MARKS
+        and unicodedata.category(char) != INVISIBLE_CATEGORY
+    ]
+    return unicodedata.normalize("NFC", "".join(kept))
+
+
+def _squeezed_token(token: str) -> str:
+    squeezed_letters = STRETCHED_LETTER.sub(r"\1", token)
+    return REPEATED_SYLLABLE.sub(r"\1\1", squeezed_letters)
+
+
+def _symbol_features(text: str, has_meaningful_words: bool) -> list[str]:
     return [
         char
         for char in text
-        if char == QUESTION_MARK or unicodedata.category(char) == SYMBOL_CATEGORY
+        if unicodedata.category(char) in SYMBOL_CATEGORIES
+        or (char in WORDLESS_MARKS and not has_meaningful_words)
     ]
 
 
@@ -61,8 +90,8 @@ def _join_negations(words: list[str]) -> list[str]:
     joined = []
     index = 0
     while index < len(words):
-        if words[index] == NEGATION and index + 1 < len(words):
-            joined.append(NEGATION + NEGATION_JOINER + words[index + 1])
+        if words[index] in NEGATIONS and index + 1 < len(words):
+            joined.append(words[index] + NEGATION_JOINER + words[index + 1])
             index += 2
         else:
             joined.append(words[index])
@@ -87,12 +116,13 @@ def edit_distance(first: str, second: str, limit: int) -> int:
     return previous[-1]
 
 
-def _corrected_token(token: str, terms: tuple[str, ...]) -> str:
+@lru_cache(maxsize=CORRECTION_CACHE_SIZE)
+def _corrected_token(token: str, terms: tuple[tuple[str, str], ...]) -> str:
     limit = LONG_WORD_EDITS if len(token) >= LONG_WORD_LENGTH else SHORT_WORD_EDITS
     best_term = token
     best_distance = limit + 1
-    best_count = 0
-    for term in terms:
+    best_canonicals = set()
+    for term, canonical in terms:
         if abs(len(term) - len(token)) > limit:
             continue
         distance = edit_distance(token, term, limit)
@@ -101,33 +131,48 @@ def _corrected_token(token: str, terms: tuple[str, ...]) -> str:
         if distance < best_distance:
             best_term = term
             best_distance = distance
-            best_count = 1
+            best_canonicals = {canonical}
         elif distance == best_distance:
-            best_count += 1
-    if best_count != 1:
+            best_canonicals.add(canonical)
+    if len(best_canonicals) != 1:
         return token
     return best_term
 
 
+def _needs_correction(token: str, lemma: str, rules: TextRules) -> bool:
+    if len(token) < MIN_TYPO_LENGTH:
+        return False
+    return lemma not in rules.known_lemmas and lemma not in rules.stopwords
+
+
 def _spell_checked_lemmas(text: str, rules: TextRules) -> list[str]:
     tokens = tokenize(text)
+    squeezed_tokens = [_squeezed_token(token) for token in tokens]
+    lemmas = lemmatize(squeezed_tokens)
     checked = []
-    for token, lemma in zip(tokens, lemmatize(tokens), strict=True):
-        if lemma in rules.known_lemmas or len(token) < MIN_TYPO_LENGTH:
-            checked.append(lemma)
+    for token, squeezed_token, lemma in zip(
+        tokens, squeezed_tokens, lemmas, strict=True
+    ):
+        if _needs_correction(token, lemma, rules):
+            corrected = _corrected_token(squeezed_token, rules.terms)
+            checked.append(lemmatize([corrected])[0])
         else:
-            checked.append(lemmatize([_corrected_token(token, rules.terms)])[0])
+            checked.append(lemma)
     return checked
 
 
 def _reply_features(text: str, rules: TextRules) -> list[str]:
+    cleaned = _cleaned_text(text)
     words = [
-        rules.synonyms.get(word, word) for word in _spell_checked_lemmas(text, rules)
+        rules.synonyms.get(word, word) for word in _spell_checked_lemmas(cleaned, rules)
     ]
     meaningful = [
-        word for word in _join_negations(words) if word not in rules.stopwords
+        word
+        for word in _join_negations(words)
+        if word not in rules.stopwords and not word.isdigit()
     ]
-    return list(dict.fromkeys(_symbol_features(text) + meaningful))
+    symbols = _symbol_features(cleaned, bool(meaningful))
+    return list(dict.fromkeys(symbols + meaningful))
 
 
 def _one_lemma_per_word(words: list[str], label: str) -> list[str]:
@@ -219,7 +264,7 @@ def _validate_features(description: dict, memes_dir: Path) -> None:
     _validate_stopwords(description["stopwords"])
 
 
-def _validate_messages(messages: list[str]) -> None:
+def _validate_messages(messages: object) -> None:
     if not isinstance(messages, list):
         raise TypeError("messages должен быть списком строк")
     if not messages:
@@ -240,11 +285,13 @@ def _known_lemmas(description: dict) -> frozenset[str]:
 
 def _build_rules(description: dict) -> TextRules:
     synonyms = {}
+    terms = set()
     for row in description["synonyms"]:
         lemmas = _one_lemma_per_word(row, "синоним")
-        for lemma in lemmas:
-            synonyms[lemma] = lemmas[0]
-    terms = {tokenize(word)[0] for row in description["synonyms"] for word in row}
+        canonical = lemmas[0]
+        for word, lemma in zip(row, lemmas, strict=True):
+            synonyms[lemma] = canonical
+            terms.add((tokenize(word)[0], canonical))
     return TextRules(
         synonyms=synonyms,
         stopwords=frozenset(
@@ -376,12 +423,8 @@ def _window_features(messages: list[str], model: Model) -> list[list[str]]:
     return [_reply_features(message, model.rules) for message in messages]
 
 
-def _has_known_feature(window: list[list[str]], model: Model) -> bool:
-    return any(
-        feature in model.collection_counts
-        for features in window
-        for feature in features
-    )
+def _has_known_feature(features: list[str], model: Model) -> bool:
+    return any(feature in model.collection_counts for feature in features)
 
 
 def _forward(window: list[list[str]], model: Model) -> list[list[float]]:
@@ -409,9 +452,10 @@ def belief_trace(messages: list[str], model: Model) -> list[list[float]]:
 
 def choose_with_model(messages: list[str], model: Model) -> str:
     _validate_messages(messages)
-    window = _window_features(messages, model)
-    if not _has_known_feature(window, model):
+    last_features = _reply_features(messages[-1], model.rules)
+    if not _has_known_feature(last_features, model):
         return model.fallback
+    window = _window_features(messages[:-1], model) + [last_features]
     return model.files[_first_max_index(_forward(window, model)[-1])]
 
 
