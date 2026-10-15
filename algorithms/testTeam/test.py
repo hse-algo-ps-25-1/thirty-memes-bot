@@ -1,8 +1,10 @@
 import re
 import unittest
+import json
 from pathlib import Path
 
 from algorithm import choose_meme
+from thirty_memes_bot.text import normalize
 
 MEME_NAME = re.compile(r"^(0[1-9]|[12]\d|30)_[A-Za-z0-9_]+\.(jpg|png)$")
 MEMES_DIR = Path(__file__).resolve().parent / "memes"
@@ -61,6 +63,80 @@ class TestChooseMeme(unittest.TestCase):
         self.assertEqual(HISTORY_A[-1], HISTORY_B[-1])
         self.assertNotEqual(HISTORY_A[:-1], HISTORY_B[:-1])
         self.assertNotEqual(choose_meme(HISTORY_A), choose_meme(HISTORY_B))
+
+
+FEATURES = {
+    int(key): value
+    for key, value in json.loads(
+        (Path(__file__).resolve().parent / "features.txt").read_text(encoding="utf-8")
+    ).items()
+}
+FALLBACK = FEATURES[30]["name"]
+NO_WORDS = ["!!!???", "@#()[]{}%", "😂🔥👍", "xyzzy"]
+
+
+def _words():
+    """Все слова из features.txt, без повторов."""
+    return sorted({word for entry in FEATURES.values() for word in entry.get("tokens", {})})
+
+
+class TestFeaturesFile(unittest.TestCase):
+    """features.txt согласован с memes/ и с нормализацией текста."""
+
+    def test_features_match_memes(self):
+        """В memes/ ровно 30 картинок; каждое имя из features.txt есть на диске и не повторяется."""
+        self.assertEqual(len(_meme_names()), 30)
+        names = [entry["name"] for entry in FEATURES.values()]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertTrue(set(names) <= _meme_names())
+
+    def test_feature_words_are_lemmas(self):
+        """Слова в features.txt записаны так, как их выдаёт normalize, иначе они никогда не совпадут."""
+        bad = {word: normalize(word) for word in _words() if normalize(word) != [word]}
+        self.assertEqual(bad, {}, f"слова не в форме леммы: {bad}")
+
+    def test_every_meme_reachable(self):
+        """У каждого мема, кроме заглушки, есть своё слово, на котором выбирается именно он."""
+        unreachable = [
+            entry["name"]
+            for entry in FEATURES.values()
+            if entry.get("tokens")
+            and not any(choose_meme([word]) == entry["name"] for word in entry["tokens"])
+        ]
+        self.assertEqual(unreachable, [])
+
+
+class TestChoiceRules(unittest.TestCase):
+    """Правила выбора: максимум счёта, ничья, заглушка, окно истории."""
+
+    def test_single_word_picks_max_weight_smaller_number_on_tie(self):
+        """Для каждого слова словаря: выигрывает мем с наибольшим весом этого слова, при равенстве — с меньшим номером."""
+        for word in _words():
+            weights = {
+                number: entry["tokens"][word]
+                for number, entry in FEATURES.items()
+                if word in entry.get("tokens", {})
+            }
+            best = max(weights.values())
+            expected = FEATURES[min(n for n, w in weights.items() if w == best)]["name"]
+            with self.subTest(word=word):
+                self.assertEqual(choose_meme([word]), expected)
+
+    def test_no_words_gives_fallback(self):
+        """Знаки препинания, смайлики и незнакомое слово без истории дают заглушку."""
+        for text in NO_WORDS:
+            with self.subTest(text=text):
+                self.assertEqual(choose_meme([text]), FALLBACK)
+
+    def test_history_window(self):
+        """Реплика без слов отвечает по истории; реплика, вышедшая за окно из пяти, уже не влияет."""
+        for word in _words():
+            alone = choose_meme([word])
+            if alone == FALLBACK:
+                continue
+            with self.subTest(word=word):
+                self.assertEqual(choose_meme([word, "!!!"]), alone)
+                self.assertEqual(choose_meme([word] + ["!!!"] * 5), FALLBACK)
 
 
 if __name__ == "__main__":
