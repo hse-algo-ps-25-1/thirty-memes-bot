@@ -65,13 +65,13 @@ class TestChooseMeme(unittest.TestCase):
         self.assertNotEqual(choose_meme(HISTORY_A), choose_meme(HISTORY_B))
 
 
-FEATURES = {
-    int(key): value
-    for key, value in json.loads(
-        (Path(__file__).resolve().parent / "features.txt").read_text(encoding="utf-8")
-    ).items()
-}
-FALLBACK = FEATURES[30]["name"]
+_RAW = json.loads(
+    (Path(__file__).resolve().parent / "features.txt").read_text(encoding="utf-8")
+)
+FEATURES = {int(key): value for key, value in _RAW["memes"].items()}
+META = _RAW["meta"]
+FALLBACK = META["fallback"]
+
 NO_WORDS = ["!!!???", "@#()[]{}%", "😂🔥👍", "xyzzy"]
 
 
