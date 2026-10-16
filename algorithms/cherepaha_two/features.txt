@@ -1,0 +1,60 @@
+{
+  "classes": {
+    "GREETING": ["привет", "хай", "ку", "добрый", "здравствуй"],
+    "BYE": ["пока", "досвидания", "бб", "споки", "ушел"],
+    "AGREEMENT": ["да", "ок", "погнали", "согласен", "плюс", "сделаю"],
+    "DISAGREEMENT": ["нет", "не", "бесит", "достало", "пас", "отказ"],
+    "LAUGH": ["ха", "ахах", "лол", "кек", "смешно", "ору"],
+    "QUESTION": ["что", "как", "почему", "где", "когда"]
+  },
+  "contexts": {
+    "STUDY": ["учеба", "вышка", "семинар", "майнор", "препод", "оценка", "пара"],
+    "WORK_IT": ["код", "баг", "прод", "модель", "стартап", "алгоритм", "репозиторий"],
+    "EXHAUSTION": ["дедлайн", "спать", "устал", "сон", "ночь", "кофе", "выгорел"],
+    "FOOD": ["еда", "пицца", "обед", "кушать", "пиво", "гулять"]
+  },
+  "routing": {
+    "GREETING": {
+      "STUDY": "01_study_hi.jpg",
+      "WORK_IT": "02_it_hi.jpg",
+      "EXHAUSTION": "03_tired_hi.jpg",
+      "FOOD": "04_food_hi.jpg",
+      "DEFAULT": "05_base_hi.jpg"
+    },
+    "BYE": {
+      "STUDY": "06_study_bye.jpg",
+      "WORK_IT": "07_it_bye.jpg",
+      "EXHAUSTION": "08_sleep_bye.jpg",
+      "FOOD": "09_food_bye.jpg",
+      "DEFAULT": "10_base_bye.jpg"
+    },
+    "AGREEMENT": {
+      "STUDY": "11_study_ok.jpg",
+      "WORK_IT": "12_it_ok.jpg",
+      "EXHAUSTION": "13_tired_ok.jpg",
+      "FOOD": "14_food_ok.jpg",
+      "DEFAULT": "15_base_ok.jpg"
+    },
+    "DISAGREEMENT": {
+      "STUDY": "16_study_no.jpg",
+      "WORK_IT": "17_it_no.jpg",
+      "EXHAUSTION": "18_tired_no.jpg",
+      "FOOD": "19_food_no.jpg",
+      "DEFAULT": "20_base_no.jpg"
+    },
+    "LAUGH": {
+      "STUDY": "21_study_lol.jpg",
+      "WORK_IT": "22_it_lol.jpg",
+      "EXHAUSTION": "23_tired_lol.jpg",
+      "FOOD": "24_food_lol.jpg",
+      "DEFAULT": "25_base_lol.jpg"
+    },
+    "QUESTION": {
+      "STUDY": "26_study_wat.jpg",
+      "WORK_IT": "27_it_wat.jpg",
+      "EXHAUSTION": "28_tired_wat.jpg",
+      "FOOD": "29_food_wat.jpg",
+      "DEFAULT": "30_base_wat.jpg"
+    }
+  }
+}
