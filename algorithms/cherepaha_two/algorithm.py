@@ -24,9 +24,23 @@ def _match_category(lemmas: set[str], categories: dict[str, list[str]]) -> str:
     for category, keywords in categories.items():
         if category == "DEFAULT":
             continue
-        # Если множества пересекаются (найдено хотя бы одно совпадение)
         if not lemmas.isdisjoint(keywords):
             return category
+    return "DEFAULT"
+
+
+def _match_context_from_history(
+    history_msgs: list[str], contexts: dict[str, list[str]]
+) -> str:
+    """
+    Ищет контекст в предыстории, начиная с самых свежих реплик.
+    Как только тема найдена в более новом сообщении, поиск прекращается.
+    """
+    for msg in reversed(history_msgs):
+        msg_lemmas = set(normalize(msg))
+        matched = _match_category(msg_lemmas, contexts)
+        if matched != "DEFAULT":
+            return matched
     return "DEFAULT"
 
 
@@ -42,25 +56,23 @@ def choose_meme(messages: list[str]) -> str:
     history_msgs = messages[:-1]
     current_msg = messages[-1]
 
-    #Нормализация
+    # 1. Уровень 1: Определяем класс (интент) по последней реплике
     current_lemmas = set(normalize(current_msg))
-
-    history_lemmas = set()
-    for msg in history_msgs:
-        history_lemmas.update(normalize(msg))
-
-    #Определение класса
     intent = _match_category(current_lemmas, features.get("classes", {}))
 
-    #Определение контекста
-    context = _match_category(history_lemmas, features.get("contexts", {}))
+    # 2. Уровень 2: Определяем контекст по предыстории (с приоритетом свежих реплик)
+    context = _match_context_from_history(messages, features.get("contexts", {}))
 
+    # 3. Маршрутизация по матрице
     routing = features.get("routing", {})
 
-    # Ищем блок правил
-    intent_rules = routing.get(intent, routing.get("DEFAULT", {}))
+    # Ищем правила для найденного интента.
+    fallback_rules = routing.get("DEFAULT", routing.get("QUESTION", {}))
+    intent_rules = routing.get(intent, fallback_rules)
 
-    # Ищем картинку. Картинка 30 - заглушка
-    meme_file = intent_rules.get(context, intent_rules.get("DEFAULT", "30_fallback.jpg"))
+    # Выбираем мем по контексту, при отсутствии — берем DEFAULT внутри этой ветки
+    meme_file = intent_rules.get(
+        context, intent_rules.get("DEFAULT", "30_base_wat.jpg")
+    )
 
     return meme_file
